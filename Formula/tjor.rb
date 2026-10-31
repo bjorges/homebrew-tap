@@ -1,8 +1,8 @@
 class Tjor < Formula
   desc "Run AI coding agents inside a portable, fail-closed container cage"
   homepage "https://github.com/bjorges/tjor"
-  url "https://github.com/bjorges/tjor/archive/refs/tags/v0.21.3.tar.gz"
-  sha256 "77d1621425de2fb749d87db8e0f2d31276724c014882be5364ca697db5b078fa"
+  url "https://github.com/bjorges/tjor/archive/refs/tags/v0.22.0.tar.gz"
+  sha256 "fccffb2e7f0694191f976185344a86845814469110cb8510550bc8e909ea7205"
   license "MIT"
 
   depends_on "bash"

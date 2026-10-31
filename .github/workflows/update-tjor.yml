@@ -1,0 +1,107 @@
+name: update-tjor
+# Keep Formula/tjor.rb at bjorges/tjor's latest release. A workflow cannot
+# subscribe to another repository's release event, so this one polls every
+# six hours (and runs on demand: right after tagging a release, `gh workflow
+# run update-tjor.yml -R bjorges/homebrew-tap` bumps the formula at once).
+# scripts/update-tjor.sh first answers "behind?" with one API call, so a run
+# with nothing to do ends in seconds without setting up Homebrew. When the
+# formula is behind, setup-homebrew places and trusts this checkout as the
+# tap (it wipes the workspace and re-fetches the commit, so it must run
+# BEFORE the rewrite), the script rewrites the url and sha256, Homebrew
+# styles, audits, installs and tests the result, and only then is the bump
+# committed and pushed with this repository's own token. Every step fails
+# closed: a failed check leaves the tap untouched and the run red.
+#
+# Residuals: up to six hours of lag unless run by hand; GitHub disables a
+# scheduled workflow in a repository without commits for 60 days (one click
+# under Actions re-enables it; the manual run keeps working); depends_on
+# lines still change by hand. Public repository: the minutes are free.
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to pin (vX.Y.Z); empty means the latest release"
+        required: false
+        default: ""
+      dry_run:
+        description: "Run every check but push nothing"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-tjor
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: is the formula behind the latest release?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TJOR_TAG: ${{ inputs.version }}
+          CHECK_ONLY: "1"
+        run: scripts/update-tjor.sh
+
+      # Puts this checkout where Homebrew expects the tap (bjorges/tap) and
+      # trusts it, so the checks below run on the rewritten working tree. It
+      # re-fetches the commit with full history (the script reads the
+      # formula's history: a version committed before with another checksum
+      # is refused), which is why the rewrite comes after it.
+      - uses: Homebrew/actions/setup-homebrew@c262868c096d909fc278daa87ed9772967331ea3 # 2026-10-30
+        if: steps.check.outputs.changed == 'true' || inputs.dry_run == true
+
+      - name: bring the formula to the latest release
+        id: update
+        if: steps.check.outputs.changed == 'true' || inputs.dry_run == true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TJOR_TAG: ${{ inputs.version }}
+        run: scripts/update-tjor.sh
+
+      # Also on a dry run with nothing to update, so a manual run proves the
+      # whole chain on the formula as it stands.
+      - name: verify with Homebrew (style, audit, install, test)
+        if: steps.update.outputs.changed == 'true' || inputs.dry_run == true
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_CLEANUP: "1"
+        run: |
+          set -euo pipefail
+          git --no-pager diff -- Formula/tjor.rb
+          brew style bjorges/tap/tjor
+          brew audit --strict bjorges/tap/tjor
+          brew install --build-from-source bjorges/tap/tjor
+          brew test bjorges/tap/tjor
+
+      - name: commit and push
+        if: steps.update.outputs.changed == 'true' && inputs.dry_run != true
+        env:
+          VERSION: ${{ steps.update.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/tjor.rb
+          git commit -m "tjor ${VERSION}"
+          git push origin HEAD:main
+          echo "tjor ${VERSION}: formula updated and pushed" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: summary
+        if: always()
+        env:
+          CHANGED: ${{ steps.check.outputs.changed }}
+          VERSION: ${{ steps.check.outputs.version }}
+          DRY: ${{ inputs.dry_run }}
+        run: |
+          if [ "${CHANGED}" = "true" ] && [ "${DRY}" = "true" ]; then echo "dry run: the formula would move to ${VERSION}; nothing pushed" >> "${GITHUB_STEP_SUMMARY}"; fi
+          if [ "${CHANGED}" = "false" ]; then echo "up to date: ${VERSION}" >> "${GITHUB_STEP_SUMMARY}"; fi

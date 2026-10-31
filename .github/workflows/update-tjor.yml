@@ -83,16 +83,21 @@ jobs:
           brew install --build-from-source bjorges/tap/tjor
           brew test bjorges/tap/tjor
 
+      # setup-homebrew re-initialised the checkout, so the credential that
+      # actions/checkout stored is gone: the push authenticates with the
+      # workflow token through gh's credential helper.
       - name: commit and push
         if: steps.update.outputs.changed == 'true' && inputs.dry_run != true
         env:
           VERSION: ${{ steps.update.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/tjor.rb
           git commit -m "tjor ${VERSION}"
+          gh auth setup-git
           git push origin HEAD:main
           echo "tjor ${VERSION}: formula updated and pushed" >> "${GITHUB_STEP_SUMMARY}"
 
